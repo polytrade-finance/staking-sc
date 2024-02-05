@@ -1,17 +1,31 @@
-name: test
-
-on: workflow_dispatch
-
-env:
-  FOUNDRY_PROFILE: ci
-
+name: Test workflow
+on: push
 jobs:
-  check:
-    strategy:
-      fail-fast: true
-
-    name: Foundry project
+  lint:
+    name: Lint sources
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+      - name: Checkout
+        uses: "actions/checkout@master"
+      - name: Set Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Create a fake .secret file
+        run: echo "primary twist rack vendor diagram image used route theme frown either will" > .secret
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Lint sources
+        run: yarn run lint
+  check:
+    runs-on: ubuntu-latest
+    env: 
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+
     steps:
       - uses: actions/checkout@v4
         with:
