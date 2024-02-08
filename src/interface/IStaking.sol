@@ -12,6 +12,7 @@ interface IStaking {
     event Withdraw(address indexed staker, uint256 amount);
     event Claim(address indexed staker, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 amount);
+    event RateUpdate(uint256 oldRate, uint256 newRate);
 
     error NotEnoughBalance();
     error NoRewards();
@@ -52,4 +53,10 @@ interface IStaking {
      * @dev staker should have the amount staked before
      */
     function emergencyWithdraw() external;
+
+    /**
+     * @dev Updates rate per second for the rewards
+     * @param rate new amount of rate
+     */
+    function updateRate(uint256 rate) external;
 }
