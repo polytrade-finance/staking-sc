@@ -11,7 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract StakingTest is Test {
     uint256 mainnetFork;
     uint256 ratePerSecond = 5787040 gwei;
-    string POLYGON_ARCHIVAL_RPC = vm.envString("POLYGON_ARCHIVAL_RPC");
+    string POLYGON_ARCHIVAL_RPC = vm.envString("POLYGON_RPC_URL");
     address owner;
     address staker1;
     address staker2;
