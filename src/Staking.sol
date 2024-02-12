@@ -29,7 +29,12 @@ contract Staking is Ownable, IStaking {
      * @param ratePerSecond_ is reward token rate per second to distribute among stakers
      * @param owner_, address of the owner of contract to update rate
      */
-    constructor(address stakingToken_, address rewardToken_, uint256 ratePerSecond_, address owner_) Ownable(owner_) {
+    constructor(
+        address stakingToken_,
+        address rewardToken_,
+        uint256 ratePerSecond_,
+        address owner_
+    ) Ownable(owner_) {
         stakingToken = IERC20(stakingToken_);
         rewardToken = IERC20(rewardToken_);
         ratePerSecond = ratePerSecond_;
@@ -42,14 +47,15 @@ contract Staking is Ownable, IStaking {
         StakerInfo storage staker = stakerInfo[msg.sender];
         _updatePool();
         if (staker.stakedAmount > 0) {
-            uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) - staker.rewardDebt;
+            uint256 pending = ((staker.stakedAmount * accRewardsPerShare) /
+                1e24) - staker.rewardDebt;
 
             staker.accRewards += pending;
         }
 
         _totalStaked += amount;
         staker.stakedAmount += amount;
-        staker.rewardDebt = staker.stakedAmount * accRewardsPerShare / 1e24;
+        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
 
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
         emit Stake(msg.sender, amount);
@@ -66,11 +72,12 @@ contract Staking is Ownable, IStaking {
 
         _updatePool();
 
-        uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) - staker.rewardDebt;
+        uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) -
+            staker.rewardDebt;
         staker.accRewards += pending;
         _totalStaked -= amount;
         staker.stakedAmount -= amount;
-        staker.rewardDebt = staker.stakedAmount * accRewardsPerShare / 1e24;
+        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
 
         _withdraw(amount);
     }
@@ -86,9 +93,12 @@ contract Staking is Ownable, IStaking {
 
         _updatePool();
 
-        rewards = ((staker.stakedAmount * accRewardsPerShare) / 1e24) + staker.accRewards - staker.rewardDebt;
+        rewards =
+            ((staker.stakedAmount * accRewardsPerShare) / 1e24) +
+            staker.accRewards -
+            staker.rewardDebt;
         staker.accRewards = 0;
-        staker.rewardDebt = staker.stakedAmount * accRewardsPerShare / 1e24;
+        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
 
         _claim(rewards);
     }
@@ -104,7 +114,10 @@ contract Staking is Ownable, IStaking {
 
         _updatePool();
 
-        rewards = ((staker.stakedAmount * accRewardsPerShare) / 1e24) + staker.accRewards - staker.rewardDebt;
+        rewards =
+            ((staker.stakedAmount * accRewardsPerShare) / 1e24) +
+            staker.accRewards -
+            staker.rewardDebt;
         _totalStaked -= staker.stakedAmount;
         delete stakerInfo[msg.sender];
 
@@ -146,10 +159,16 @@ contract Staking is Ownable, IStaking {
         }
         StakerInfo memory staker = stakerInfo[account];
 
-        uint256 reward = (block.timestamp - lastRewardTimestamp) * ratePerSecond;
-        uint256 rewardsPerShare = accRewardsPerShare + (reward * 1e24) / _totalStaked;
+        uint256 reward = (block.timestamp - lastRewardTimestamp) *
+            ratePerSecond;
+        uint256 rewardsPerShare = accRewardsPerShare +
+            (reward * 1e24) /
+            _totalStaked;
 
-        return ((staker.stakedAmount * rewardsPerShare) / 1e24) + staker.accRewards - staker.rewardDebt;
+        return
+            ((staker.stakedAmount * rewardsPerShare) / 1e24) +
+            staker.accRewards -
+            staker.rewardDebt;
     }
 
     /**
@@ -199,7 +218,8 @@ contract Staking is Ownable, IStaking {
             return;
         }
 
-        uint256 reward = (block.timestamp - lastRewardTimestamp) * ratePerSecond;
+        uint256 reward = (block.timestamp - lastRewardTimestamp) *
+            ratePerSecond;
 
         accRewardsPerShare += (reward * 1e24) / _totalStaked;
         lastRewardTimestamp = block.timestamp;
