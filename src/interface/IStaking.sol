@@ -6,6 +6,7 @@ interface IStaking {
         uint256 stakedAmount;
         uint256 rewardDebt;
         uint256 accRewards;
+        uint256 stakeTimestamp;
     }
 
     event Stake(address indexed staker, uint256 amount);
@@ -13,7 +14,8 @@ interface IStaking {
     event Claim(address indexed staker, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 amount);
     event RateUpdate(uint256 oldRate, uint256 newRate);
-
+    event ClaimStatusUpdate(bool status);
+    
     error NotEnoughBalance();
     error NoRewards();
 
