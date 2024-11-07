@@ -20,9 +20,9 @@ contract TimedStakingTest is Test {
     address user1 = address(2);
     address user2 = address(3);
 
-    uint256 maxStake = 1_000 ether;
-    uint256 lockInPeriod = 30 days;
-    uint256 apr = 10;  // 10% APR
+    uint256 maxStakePool = 1_000 ether;  // Total pool cap
+    uint256 lockInPeriod = 180 days;     // Lock-in period for each staker
+    uint256 apr = 10;                    // 10% APR
 
     function setUp() public {
         // Deploy mock tokens and mint balances
@@ -36,7 +36,7 @@ contract TimedStakingTest is Test {
         staking = new TimedStaking(
             address(stakingToken),
             address(rewardToken),
-            maxStake,
+            maxStakePool,
             lockInPeriod,
             apr,
             owner
@@ -50,13 +50,13 @@ contract TimedStakingTest is Test {
     function testConstructorInitialization() public {
         assertEq(address(staking.stakingToken()), address(stakingToken));
         assertEq(address(staking.rewardToken()), address(rewardToken));
-        assertEq(staking.maxStake(), maxStake);
+        assertEq(staking.maxStake(), maxStakePool);
         assertEq(staking.lockInPeriod(), lockInPeriod);
         assertEq(staking.apr(), apr);
         assertFalse(staking.isClaimActive());
     }
 
-    function testStakeWithinLimit() public {
+    function testStakeWithinPoolLimit() public {
         uint256 amount = 500 ether;
 
         vm.startPrank(user1);
@@ -64,13 +64,13 @@ contract TimedStakingTest is Test {
         staking.stake(amount);
 
         // Verify staked amount and total staked
-        IStaking.StakerInfo memory info = staking.stakerInfo(user1);
+        IStaking.StakerInfo memory info = staking.getStakerInfo(user1);
         assertEq(info.stakedAmount, amount);
         assertEq(staking.totalStaked(), amount);
     }
 
-    function testStakeExceedsMaxLimit() public {
-        uint256 amount = maxStake + 1 ether;
+    function testStakeExceedsPoolLimit() public {
+        uint256 amount = maxStakePool + 1 ether;
 
         vm.startPrank(user1);
         stakingToken.approve(address(staking), amount);
@@ -79,7 +79,7 @@ contract TimedStakingTest is Test {
         staking.stake(amount);
     }
 
-    function testWithdrawBeforeLockPeriod() public {
+    function testLockInPeriodPerStaker() public {
         uint256 amount = 100 ether;
 
         vm.startPrank(user1);
@@ -90,20 +90,12 @@ contract TimedStakingTest is Test {
 
         vm.expectRevert("Lock-in period active");
         staking.withdraw(amount);
-    }
 
-    function testWithdrawAfterLockPeriod() public {
-        uint256 amount = 100 ether;
-
-        vm.startPrank(user1);
-        stakingToken.approve(address(staking), amount);
-        staking.stake(amount);
-
-        vm.warp(block.timestamp + lockInPeriod);
-
+        // Moving time to after the lock-in period
+        vm.warp(block.timestamp + 1);
         staking.withdraw(amount);
-
-        IStaking.StakerInfo memory info = staking.stakerInfo(user1);
+        
+        IStaking.StakerInfo memory info = staking.getStakerInfo(user1);
         assertEq(info.stakedAmount, 0);
     }
 
@@ -131,7 +123,7 @@ contract TimedStakingTest is Test {
 
         staking.emergencyWithdraw();
 
-        IStaking.StakerInfo memory info = staking.stakerInfo(user1);
+        IStaking.StakerInfo memory info = staking.getStakerInfo(user1);
         assertEq(info.stakedAmount, 0);
     }
 

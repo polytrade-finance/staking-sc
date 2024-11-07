@@ -19,16 +19,14 @@ contract TimedStaking is Ownable, IStaking {
     uint256 public ratePerSecond;
     uint256 public lastRewardTimestamp;
     uint256 public accRewardsPerShare;
-    uint256 public maxStake;      // Maximum tokens a staker can stake
+    uint256 public maxStake;      // Maximum total tokens in pool
     uint256 public lockInPeriod;  // Lock-in period for each staker
     uint256 public apr;           // Annual Percentage Rate
-    uint256 public endTimestamp;
     uint256 private _totalStaked;
     bool public stakingStarted;
     bool public isClaimActive;
 
     mapping(address => StakerInfo) public stakerInfo;
-    
     
     /**
      * @param stakingToken_ address of ERC20 underlying token
@@ -51,22 +49,25 @@ contract TimedStaking is Ownable, IStaking {
         maxStake = maxStake_;
         lockInPeriod = lockInPeriod_;
         apr = apr_;
+        isClaimActive = false;  // Initialize claim as in active
 
         // Calculate rate per second based on APR and max cap
+        //TODO
         ratePerSecond = (apr * maxStake) / (365 days); // APR, calculated per second
-        isClaimActive = false;  // Initialize claim as in active
     }
 
     /**
      * @dev Stake function with lock-in and max cap per staker.
      */
     function stake(uint256 amount) external {
-        require(!stakingStarted || block.timestamp <= endTimestamp, "Staking period closed");
         require(_totalStaked + amount <= maxStake, "Exceeds max stake limit");
 
         StakerInfo storage staker = stakerInfo[msg.sender];
         _updatePool();
 
+        if (staker.stakedAmount == 0) {
+            staker.stakeTimestamp = block.timestamp;
+        }
         if (staker.stakedAmount > 0) {
             uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) - staker.rewardDebt;
             staker.accRewards += pending;
@@ -82,8 +83,10 @@ contract TimedStaking is Ownable, IStaking {
 
         if (!stakingStarted) {
             stakingStarted = true;
-            endTimestamp = block.timestamp + lockInPeriod;
+            lastRewardTimestamp = block.timestamp;
         }
+        // Dynamically adjust the rate per second based on APR and total staked
+        ratePerSecond = (_totalStaked * apr) / (365 days * 1e4);
     }
 
     /**
@@ -250,5 +253,9 @@ contract TimedStaking is Ownable, IStaking {
 
         accRewardsPerShare += (reward * 1e24) / _totalStaked;
         lastRewardTimestamp = block.timestamp;
+    }
+
+    function getStakerInfo(address account) external view returns (StakerInfo memory) {
+        return stakerInfo[account];
     }
 }
