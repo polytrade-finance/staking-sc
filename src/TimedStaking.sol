@@ -16,7 +16,6 @@ contract TimedStaking is Ownable, IStaking {
     uint256 public maxStake;      // Maximum total tokens in pool
     uint256 public lockInPeriod;  // Lock-in period for pool
     uint256 public apr;           // Annual Percentage Rate
-    uint256 public interestStartTimestamp; // Interest start time in EPOCH
     uint256 private _totalStaked;
     bool public isClaimActive;
     bool public depositsOpen = true;
@@ -29,7 +28,7 @@ contract TimedStaking is Ownable, IStaking {
         uint256 maxStake_,
         uint256 lockInPeriod_,
         uint256 apr_,
-        uint256 interestStartEpoch_,
+        uint256 interestStartTimestamp_,
         address owner_
     ) Ownable(owner_) {
         stakingToken = IERC20(stakingToken_);
@@ -187,5 +186,38 @@ contract TimedStaking is Ownable, IStaking {
     function _withdraw(uint256 amount) private {
         stakingToken.safeTransfer(msg.sender, amount);
         emit Withdraw(msg.sender, amount);
+    }
+
+    /**
+    * @dev Allows the owner to withdraw all staking tokens in an emergency.
+    */
+    function emergencyWithdraw() external onlyOwner(){
+        uint256 balance = stakingToken.balanceOf(address(this));
+        stakingToken.safeTransfer(owner(), balance);
+        emit EmergencyWithdraw(owner(), balance);
+    }
+
+    /**
+    * @dev Updates the rate per second. This might be needed for changing APR or reward structure.
+    * @param rate New rate per second.
+    */
+    function updateRate(uint256 rate) external onlyOwner {
+        ratePerSecond = rate;
+        emit RateUpdate(apr, rate);
+    }
+
+     /**
+     * @dev See {IStaking-getAPR}.
+     */
+    function getAPR() external view returns (uint256) {
+        return apr;
+    }
+    uint256 public interestStartTimestamp; // Interest start time in EPOCH
+
+    /**
+     * @dev See {IStaking-getInterestStartTimestamp}.
+     */
+    function getInterestStartTimestamp() external view returns (uint256) {
+        return interestStartTimestamp;
     }
 }
