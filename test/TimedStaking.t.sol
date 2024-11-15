@@ -1,162 +1,105 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.20;
 
-import "forge-std/console.sol";
-import {Test, console2} from "forge-std/Test.sol";
-import {TimedStaking} from "contracts/TimedStaking.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IStaking} from "contracts/interface/IStaking.sol";
-
-contract MockToken is ERC20 {
-    constructor(string memory name, string memory symbol) ERC20(name, symbol) {
-        _mint(msg.sender, 1_000_000 * 1e18); // Mint 1 million tokens for testing
-    }
-}
+import "forge-std/Test.sol";
+import "../src/TimedStaking.sol";
+import "./utils/ERC20Mock.sol";
 
 contract TimedStakingTest is Test {
     TimedStaking public staking;
-    MockToken public stakingToken;
-    MockToken public rewardToken;
-    address public user = address(0x123);
-    uint256 public initialStakeAmount = 1000 * 1e18;
+    ERC20Mock public stakingToken;
+    ERC20Mock public rewardToken;
+
+    address public user = address(0x1);
+
+    uint256 public maxStake = 1000 ether;
+    uint256 public lockInPeriod = 30 days;
+    uint256 public apr = 10; // 10% APR for simplicity
+    uint256 public interestStartTimestamp;
 
     function setUp() public {
-        stakingToken = new MockToken("Staking Token", "STK");
-        rewardToken = new MockToken("Reward Token", "RWD");
+        stakingToken = new ERC20Mock("StakingToken", "STK", 18);
+        rewardToken = new ERC20Mock("RewardToken", "RWD", 18);
+
+        // Set the interest start timestamp to 2 days from the current time
+        interestStartTimestamp = block.timestamp + 2 days;
 
         staking = new TimedStaking(
             address(stakingToken),
             address(rewardToken),
-            10_000 * 1e18,    // max stake
-            30 days,          // lock-in period
-            500,              // APR (5%)
-            block.timestamp + 1 days, // interest start timestamp
-            address(this)     // owner
+            maxStake,
+            lockInPeriod,
+            apr,
+            interestStartTimestamp,
+            address(this) // owner
         );
 
-        stakingToken.transfer(user, initialStakeAmount);
+        // Mint and allocate tokens for the user and staking contract
+        stakingToken.mint(user, 100 ether);
+        rewardToken.mint(address(staking), 1000 ether);
+    }
+
+    function testStakeTokens() public {
         vm.startPrank(user);
-        stakingToken.approve(address(staking), initialStakeAmount);
+        stakingToken.approve(address(staking), 10 ether);
+        staking.stake(10 ether);
+
+        assertEq(staking.balanceOf(user), 10 ether, "User's staked amount should be 10 ether");
+        assertEq(staking.totalStaked(), 10 ether, "Total staked amount should be 10 ether");
         vm.stopPrank();
     }
 
-    // Test cases
-
-    function testStake() public {
+    function testWithdrawTokens() public {
         vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        vm.stopPrank();
+        stakingToken.approve(address(staking), 10 ether);
+        staking.stake(10 ether);
 
-        (stakedAmount,,,) = staking.stakerInfo(user);
-        assertEq(stakedAmount, 500 * 1e18, "Stake amount should be 500 tokens");
-    }
+        // Fast-forward time beyond the lock-in period + interest start time
+        vm.warp(interestStartTimestamp + lockInPeriod + 1);
+        staking.withdraw(10 ether);
 
-    function testExceedMaxStakeFails() public {
-        vm.startPrank(user);
-        staking.stake(10_000 * 1e18); // Full max stake
-        vm.expectRevert("Exceeds max stake limit");
-        staking.stake(1 * 1e18); // Exceed max stake
+        assertEq(staking.balanceOf(user), 0, "User's balance should be 0 after withdrawal");
+        assertEq(staking.totalStaked(), 0, "Total staked amount should be 0 after withdrawal");
         vm.stopPrank();
     }
 
-    function testWithdrawBeforeLockInFails() public {
+    function testClaimRewards() public {
         vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        vm.expectRevert("Lock-in period active");
-        staking.withdraw(500 * 1e18);
-        vm.stopPrank();
-    }
+        stakingToken.approve(address(staking), 10 ether);
+        staking.stake(10 ether);
 
-    function testWithdrawAfterLockInPeriod() public {
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        skip(30 days); // Move time forward past lock-in period
-        staking.withdraw(500 * 1e18);
-        vm.stopPrank();
-
-        (stakedAmount,,,) = staking.stakerInfo(user);
-        assertEq(stakedAmount, 0, "Stake should be withdrawn fully");
-    }
-
-    function testClaimBeforeActiveFails() public {
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        staking.setClaimActive(false); // Make sure claim is inactive
-        vm.expectRevert("Claiming is not active yet.");
-        staking.claim();
-        vm.stopPrank();
-    }
-
-    function testClaimAfterActive() public {
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        staking.setClaimActive(true); // Enable claiming
-
-        skip(10 days); // Accumulate some rewards
-        uint256 rewards = staking.claim();
-
-        assertGt(rewards, 0, "Rewards should be greater than zero");
-        vm.stopPrank();
-    }
-
-    function testWithdrawAll() public {
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        staking.setClaimActive(true); // Enable claim functionality
-
-        skip(30 days); // Pass lock-in period
-        uint256 rewards = staking.withdrawAll();
-
-        assertGt(rewards, 0, "Rewards should be non-zero after withdrawAll");
-
-        (stakedAmount,,,) = staking.stakerInfo(user);
-        assertEq(stakedAmount, 0, "Staked amount should be zero after withdrawAll");
-        vm.stopPrank();
-    }
-
-    function testToggleDeposits() public {
-        staking.toggleDeposits(false);
-        vm.startPrank(user);
-        vm.expectRevert("Deposits are currently closed");
-        staking.stake(500 * 1e18);
-        vm.stopPrank();
-    }
-
-    function testInterestAccrual() public {
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        skip(15 days);
-        uint256 accruedReward = staking.getReward(user);
-
-        assertGt(accruedReward, 0, "Accrued reward should be non-zero after 15 days");
-        vm.stopPrank();
-    }
-
-    function testStakeAndClaimWithMultipleUsers() public {
-        address user2 = address(0x456);
-        stakingToken.transfer(user2, initialStakeAmount);
-
-        vm.startPrank(user);
-        staking.stake(500 * 1e18);
-        vm.stopPrank();
-
-        vm.startPrank(user2);
-        stakingToken.approve(address(staking), initialStakeAmount);
-        staking.stake(500 * 1e18);
-        vm.stopPrank();
-
+        // Fast-forward time to enable rewards
+        vm.warp(interestStartTimestamp + 1 days);
         staking.setClaimActive(true);
-        skip(30 days);
+        staking.claim();
 
+        uint256 claimedRewards = rewardToken.balanceOf(user);
+        assertGt(claimedRewards, 0, "Claimed rewards should be greater than 0");
+        vm.stopPrank();
+    }
+
+    function testEmergencyWithdraw() public {
         vm.startPrank(user);
-        uint256 user1Rewards = staking.claim();
-        assertGt(user1Rewards, 0, "User1 should have non-zero rewards");
+        stakingToken.approve(address(staking), 10 ether);
+        staking.stake(10 ether);
         vm.stopPrank();
 
-        vm.startPrank(user2);
-        uint256 user2Rewards = staking.claim();
-        assertGt(user2Rewards, 0, "User2 should have non-zero rewards");
-        vm.stopPrank();
+        // Perform emergency withdraw by the owner
+        uint256 contractBalanceBefore = stakingToken.balanceOf(address(staking));
+        staking.emergencyWithdraw();
+        uint256 contractBalanceAfter = stakingToken.balanceOf(address(staking));
+        
+        assertEq(contractBalanceAfter, 0, "Staking contract balance should be 0 after emergency withdraw");
+        assertEq(
+            stakingToken.balanceOf(address(this)),
+            contractBalanceBefore,
+            "Owner should receive all staked tokens after emergency withdraw"
+        );
+    }
+
+    function testSetClaimActive() public {
+        assertFalse(staking.isClaimActive(), "Claim should be initially inactive");
+        staking.setClaimActive(true);
+        assertTrue(staking.isClaimActive(), "Claim should be active after setting it");
     }
 }

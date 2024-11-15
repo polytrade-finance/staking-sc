@@ -1,24 +1,25 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.20;
 
 import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IStaking} from "contracts/interface/IStaking.sol";
+import {IStaking} from "./interface/IStaking.sol";
 
 contract TimedStaking is Ownable, IStaking {
     using SafeERC20 for IERC20;
 
     IERC20 public stakingToken;
     IERC20 public rewardToken;
-    uint256 public ratePerSecond;
     uint256 public lastRewardTimestamp;
     uint256 public accRewardsPerShare;
     uint256 public maxStake;      // Maximum total tokens in pool
     uint256 public lockInPeriod;  // Lock-in period for pool
     uint256 public apr;           // Annual Percentage Rate
+    uint256 public interestStartTimestamp; // Interest start time in EPOCH
     uint256 private _totalStaked;
+    uint256 private ratePerSecond;
     bool public isClaimActive;
-    bool public depositsOpen = true;
+    
 
     mapping(address => StakerInfo) public stakerInfo;
 
@@ -39,68 +40,55 @@ contract TimedStaking is Ownable, IStaking {
         interestStartTimestamp = interestStartTimestamp_;
         isClaimActive = false;
 
-        // Calculate a fixed rate per second based on APR and maxStake
-        ratePerSecond = (apr * maxStake) / (365 days * 1e4);
+        // Calculate ratePerSecond
+        uint256 secondsInYear = 365 * 24 * 60 * 60; // Approximate seconds in a year
+        ratePerSecond = (maxStake_ * apr_ * 1e24) / (100 * secondsInYear); // Scale by 1e24 to maintain precision
     }
 
     function stake(uint256 amount) external {
         require(block.timestamp < interestStartTimestamp, "Deposits closed");
-        require(depositsOpen, "Deposits are currently closed");
         require(_totalStaked + amount <= maxStake, "Exceeds max stake limit");
+        require(amount > 0, "Amount must be greater than 0");
 
-        StakerInfo storage staker = stakerInfo[msg.sender];
-
-        // Accumulate pending rewards for the staker only if after interest start
-        if (block.timestamp >= interestStartTimestamp && staker.stakedAmount > 0) {
-            uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) - staker.rewardDebt;
-            staker.accRewards += pending;
+        // Accumulate pending rewards for the staker if after interest start
+        if (block.timestamp >= interestStartTimestamp && stakerInfo[msg.sender].stakedAmount > 0) {
+            uint256 pendingReward = _calculateReward(msg.sender);
+            stakerInfo[msg.sender].accRewards += pendingReward;
         }
-
-        _totalStaked += amount;
-        staker.stakedAmount += amount;
-        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
-        staker.stakeTimestamp = block.timestamp;
-
+        
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
-        emit Stake(msg.sender, amount);
+        
+        _totalStaked += amount;
+        stakerInfo[msg.sender].stakedAmount += amount;
+        stakerInfo[msg.sender].rewardDebt = (stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24;
+        stakerInfo[msg.sender].stakeTimestamp = block.timestamp;
 
-        // Check if the pool has reached maxStake
-        if (_totalStaked >= maxStake) {
-            depositsOpen = false;
-        }
+        emit Stake(msg.sender, amount);
     }
 
     function withdraw(uint256 amount) external {
-        StakerInfo storage staker = stakerInfo[msg.sender];
-        require(staker.stakedAmount >= amount, "Not enough balance");
+    
+        require(stakerInfo[msg.sender].stakedAmount >= amount, "Not enough balance");
         require(block.timestamp >= interestStartTimestamp + lockInPeriod, "Lock-in period active");
 
-        uint256 pending = ((staker.stakedAmount * accRewardsPerShare) / 1e24) - staker.rewardDebt;
-        staker.accRewards += pending;
+        uint256 pending = ((stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24) - stakerInfo[msg.sender].rewardDebt;
+        stakerInfo[msg.sender].accRewards += pending;
         _totalStaked -= amount;
-        staker.stakedAmount -= amount;
-        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
+        stakerInfo[msg.sender].stakedAmount -= amount;
+        stakerInfo[msg.sender].rewardDebt = (stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24;
 
         _withdraw(amount);
     }
 
     function claim() external returns (uint256 rewards) {
         require(isClaimActive, "Claiming is not active yet.");
-        StakerInfo storage staker = stakerInfo[msg.sender];
-        require(staker.stakedAmount > 0 || staker.accRewards > 0, "No rewards to claim");
+        require(stakerInfo[msg.sender].stakedAmount > 0 || stakerInfo[msg.sender].accRewards > 0, "No rewards to claim");
 
-        rewards = ((staker.stakedAmount * accRewardsPerShare) / 1e24) + staker.accRewards - staker.rewardDebt;
-        staker.accRewards = 0;
-        staker.rewardDebt = (staker.stakedAmount * accRewardsPerShare) / 1e24;
+        rewards = ((stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24) + stakerInfo[msg.sender].accRewards - stakerInfo[msg.sender].rewardDebt;
+        stakerInfo[msg.sender].accRewards = 0;
+        stakerInfo[msg.sender].rewardDebt = (stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24;
 
         _claim(rewards);
-    }
-
-     /**
-     * @dev Toggles deposits open or closed based on admin.
-     */
-    function toggleDeposits(bool _status) external onlyOwner {
-        depositsOpen = _status;
     }
 
     /**
@@ -115,8 +103,7 @@ contract TimedStaking is Ownable, IStaking {
      * @dev See {IStaking-withdrawAll}.
      */
     function withdrawAll() external returns (uint256 rewards) {
-        StakerInfo storage staker = stakerInfo[msg.sender];
-        require(staker.stakedAmount > 0, "Not enough balance");
+        require(stakerInfo[msg.sender].stakedAmount > 0, "Not enough balance");
 
         // Ensure the lock-in period has passed
         require(block.timestamp >= interestStartTimestamp + lockInPeriod, "Lock-in period active");
@@ -125,17 +112,18 @@ contract TimedStaking is Ownable, IStaking {
         require(isClaimActive, "Claiming is not active yet");
 
         // Calculate rewards
-        rewards = ((staker.stakedAmount * accRewardsPerShare) / 1e24) + staker.accRewards - staker.rewardDebt;
+        rewards = ((stakerInfo[msg.sender].stakedAmount * accRewardsPerShare) / 1e24) + 
+            stakerInfo[msg.sender].accRewards - stakerInfo[msg.sender].rewardDebt;
 
         // Reset staker's reward tracking
-        staker.accRewards = 0;
-        staker.rewardDebt = 0;
+        stakerInfo[msg.sender].accRewards = 0;
+        stakerInfo[msg.sender].rewardDebt = 0;
 
         // Update total staked
-        _totalStaked -= staker.stakedAmount;
+        _totalStaked -= stakerInfo[msg.sender].stakedAmount;
 
         // Delete staker info
-        uint256 stakedAmount = staker.stakedAmount;
+        uint256 stakedAmount = stakerInfo[msg.sender].stakedAmount;
         delete stakerInfo[msg.sender];
 
         // Claim rewards and withdraw staked tokens
@@ -145,19 +133,20 @@ contract TimedStaking is Ownable, IStaking {
 
     /**
      * @dev See {IStaking-getReward}.
-     */
+     
     function getReward(address account) external view returns (uint256) {
         if (_totalStaked == 0 || block.timestamp < interestStartTimestamp) {
             return 0;
         }
-        StakerInfo memory staker = stakerInfo[account];
+
         uint256 reward = (block.timestamp - lastRewardTimestamp) * ratePerSecond;
         uint256 rewardsPerShare = accRewardsPerShare + (reward * 1e24) / _totalStaked;
         return
-            ((staker.stakedAmount * rewardsPerShare) / 1e24) +
-            staker.accRewards -
-            staker.rewardDebt;
+            ((stakerInfo[msg.sender].stakedAmount * rewardsPerShare) / 1e24) +
+            stakerInfo[msg.sender].accRewards -
+            stakerInfo[msg.sender].rewardDebt;
     }
+    */
     /**
      * @dev See {IStaking-totalStaked}.
      */
@@ -169,6 +158,21 @@ contract TimedStaking is Ownable, IStaking {
      */
     function balanceOf(address account) external view returns (uint256) {
         return stakerInfo[account].stakedAmount;
+    }
+
+    function _calculateReward(address user) internal view returns (uint256 reward) {
+        // If user has no staked amount or rewards are before the interest start
+        if (stakerInfo[user].stakedAmount == 0 || block.timestamp < interestStartTimestamp) {
+            return 0;
+        }
+
+        // Calculate rewards for the period since the last update
+        uint256 stakedDuration = block.timestamp > (interestStartTimestamp + lockInPeriod)
+            ? (interestStartTimestamp + lockInPeriod) - stakerInfo[user].stakeTimestamp
+            : block.timestamp - stakerInfo[user].stakeTimestamp;
+
+        reward = (stakerInfo[user].stakedAmount * ratePerSecond * stakedDuration) / 1e24; // Unscale rewards
+        return reward;
     }
 
     /**
@@ -202,22 +206,7 @@ contract TimedStaking is Ownable, IStaking {
     * @param rate New rate per second.
     */
     function updateRate(uint256 rate) external onlyOwner {
-        ratePerSecond = rate;
         emit RateUpdate(apr, rate);
-    }
-
-     /**
-     * @dev See {IStaking-getAPR}.
-     */
-    function getAPR() external view returns (uint256) {
-        return apr;
-    }
-    uint256 public interestStartTimestamp; // Interest start time in EPOCH
-
-    /**
-     * @dev See {IStaking-getInterestStartTimestamp}.
-     */
-    function getInterestStartTimestamp() external view returns (uint256) {
-        return interestStartTimestamp;
+        apr = rate;
     }
 }
