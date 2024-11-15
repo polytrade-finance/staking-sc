@@ -9,8 +9,8 @@ contract TimedStakingTest is Test {
     TimedStaking public staking;
     ERC20Mock public stakingToken;
     ERC20Mock public rewardToken;
-
-    address public user = address(0x1);
+    address public ownerAddr = address(0x1);
+    address public user = address(0x2);
 
     uint256 public maxStake = 1000 ether;
     uint256 public lockInPeriod = 30 days;
@@ -31,7 +31,7 @@ contract TimedStakingTest is Test {
             lockInPeriod,
             apr,
             interestStartTimestamp,
-            address(this) // owner
+            ownerAddr // owner
         );
 
         // Mint and allocate tokens for the user and staking contract
@@ -64,13 +64,16 @@ contract TimedStakingTest is Test {
     }
 
     function testClaimRewards() public {
+        vm.startPrank(ownerAddr);
+        staking.setClaimActive(true);
+        vm.stopPrank();
+        
         vm.startPrank(user);
         stakingToken.approve(address(staking), 10 ether);
         staking.stake(10 ether);
 
         // Fast-forward time to enable rewards
         vm.warp(interestStartTimestamp + 1 days);
-        staking.setClaimActive(true);
         staking.claim();
 
         uint256 claimedRewards = rewardToken.balanceOf(user);
@@ -84,22 +87,26 @@ contract TimedStakingTest is Test {
         staking.stake(10 ether);
         vm.stopPrank();
 
+        vm.startPrank(ownerAddr);
         // Perform emergency withdraw by the owner
         uint256 contractBalanceBefore = stakingToken.balanceOf(address(staking));
         staking.emergencyWithdraw();
         uint256 contractBalanceAfter = stakingToken.balanceOf(address(staking));
-        
+        vm.stopPrank(); 
+
         assertEq(contractBalanceAfter, 0, "Staking contract balance should be 0 after emergency withdraw");
         assertEq(
-            stakingToken.balanceOf(address(this)),
+            stakingToken.balanceOf(ownerAddr),
             contractBalanceBefore,
             "Owner should receive all staked tokens after emergency withdraw"
         );
     }
 
     function testSetClaimActive() public {
+        vm.startPrank(ownerAddr);
         assertFalse(staking.isClaimActive(), "Claim should be initially inactive");
         staking.setClaimActive(true);
         assertTrue(staking.isClaimActive(), "Claim should be active after setting it");
+        vm.stopPrank();
     }
 }
